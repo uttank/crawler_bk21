@@ -1,0 +1,9 @@
+requests
+beautifulsoup4
+pandas
+openai
+python-dateutil
+chromadb
+streamlit
+tiktoken
+python-dotenv
