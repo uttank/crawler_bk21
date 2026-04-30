@@ -312,8 +312,8 @@ def main():
         """,
     )
     parser.add_argument(
-        "--file", type=str, default="bk21_qna_dataset.csv",
-        help="분석할 CSV 파일 경로 (기본: bk21_qna_dataset.csv)",
+        "--file", type=str, default="data/bk21_qna_dataset.csv",
+        help="분석할 CSV 파일 경로 (기본: data/bk21_qna_dataset.csv)",
     )
     parser.add_argument(
         "--columns", nargs="+", type=str, default=None,

@@ -15,7 +15,7 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
 }
 # 고정된 통합 파일명 (업데이트 모드에서 활용)
-CSV_FILENAME = "bk21_qna_dataset.csv"
+CSV_FILENAME = "data/bk21_qna_dataset.csv"
 
 # ==========================================
 # 네트워크 예외 처리 헬퍼 함수

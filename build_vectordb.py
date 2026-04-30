@@ -7,8 +7,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # 상수 설정
-INPUT_FILE = "bk21_qna_cleaned.csv"
-CHROMA_DB_DIR = os.getenv("CHROMA_DB_DIR", "./chroma_db")
+INPUT_FILE = "data/bk21_qna_cleaned.csv"
+CHROMA_DB_DIR = os.getenv("CHROMA_DB_DIR", "./data/chroma_db")
 COLLECTION_NAME = "bk21_qna"
 EMBEDDING_MODEL = "text-embedding-3-small"
 BATCH_SIZE = 100  # 한 번에 임베딩할 텍스트 수 (API 속도 제한 고려)
@@ -66,13 +66,13 @@ def build_vector_db():
         doc_id = str(row['nttId'])
         text = str(row['Combined_Text'])
         
-        # 메타데이터 구성
+        # 메타데이터 구성 (LLM 컨텍스트로도 사용되므로 자르지 않음)
         meta = {
             "nttId": doc_id,
             "Question_Date": str(row['Date']),
             "Answer_Date": str(row['Answer_Date']) if pd.notna(row['Answer_Date']) else "",
-            "Question": str(row['Question'])[:500], # 너무 길면 Chroma 속도 저하
-            "Answer": str(row['Answer'])[:500]
+            "Question": str(row['Question']),
+            "Answer": str(row['Answer'])
         }
         
         documents.append(text)

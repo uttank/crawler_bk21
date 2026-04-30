@@ -1,6 +1,9 @@
-import streamlit as st
 import time
-from rag_engine import BKRAGEngine
+
+import streamlit as st
+
+from rag_engine import BKRAGEngine, EMBEDDING_MODEL, LLM_MODEL
+from request_log import log_feedback, log_request
 
 # 페이지 기본 설정
 st.set_page_config(
@@ -38,79 +41,131 @@ if "engine" not in st.session_state:
         st.error(f"엔진 초기화 실패: {e}")
         st.session_state.engine = None
 
+
+def _render_sources(docs):
+    """검색된 문서를 규정/Q&A로 분리해 표시."""
+    regs = [d for d in docs if d.get("doc_type") == "regulation"]
+    qnas = [d for d in docs if d.get("doc_type") == "qna"]
+
+    if regs:
+        with st.expander(f"📖 참고한 규정 {len(regs)}건"):
+            for idx, d in enumerate(regs, 1):
+                version = f" · 버전 {d['version']}" if d.get('version') else ""
+                st.markdown(f"**[{idx}] {d['citation']}**{version}")
+                st.markdown(f"> {d['full_text']}")
+                st.divider()
+
+    if qnas:
+        with st.expander(f"💬 참고한 과거 Q&A {len(qnas)}건"):
+            for idx, d in enumerate(qnas, 1):
+                date_str = f"({d['a_date']})" if d.get('a_date') else ""
+                st.markdown(f"**[{idx}] nttId {d['id']}** {date_str}")
+                st.markdown(f"> **Q:** {d['question']}")
+                st.markdown(f"> **A:** {d['answer']}")
+                st.divider()
+
+
+def _submit_feedback(message_idx: int, feedback: str):
+    """피드백 콜백 — 세션 메시지 갱신 + DB 기록."""
+    msg = st.session_state.messages[message_idx]
+    msg["feedback"] = feedback
+    log_id = msg.get("log_id")
+    if log_id is not None:
+        log_feedback(log_id, feedback)
+
+
+def _render_feedback(message_idx: int, msg: dict):
+    """답변 옆 👍/👎 버튼. 이미 피드백된 경우 결과만 표시."""
+    if msg.get("log_id") is None:
+        return  # 로깅 실패한 응답에는 표시 안 함
+    fb = msg.get("feedback")
+    if fb:
+        st.caption(f"피드백 기록: {'👍 도움됨' if fb == 'up' else '👎 부족함'}")
+        return
+    cols = st.columns([1, 1, 8])
+    cols[0].button("👍", key=f"fb_up_{message_idx}",
+                   on_click=_submit_feedback, args=(message_idx, "up"))
+    cols[1].button("👎", key=f"fb_down_{message_idx}",
+                   on_click=_submit_feedback, args=(message_idx, "down"))
+
+
 def main():
     st.title("🤖 BK21 FOUR Q&A 챗봇")
-    st.caption("사업 관련 문의사항을 자연어로 질문해 보세요. (기존 10,800여 건의 Q&A 데이터를 검색하여 답변합니다)")
+    st.caption("사업 관련 문의사항을 자연어로 질문해 보세요. 공식 규정집 + 과거 Q&A 10,800여 건을 함께 검색하여 답변합니다.")
 
     # 사이드바 (설정 메뉴)
     with st.sidebar:
         st.header("⚙️ 검색 설정")
-        top_k = st.slider("참고할 문서 수 (Top-K)", min_value=1, max_value=10, value=3)
+        top_k = st.slider("참고할 문서 수 (Top-K)", min_value=1, max_value=10, value=5)
         st.divider()
         st.info("""
         **💡 이용 팁**
         - 구체적인 상황을 포함하여 질문하면 더 정확한 답변을 얻을 수 있습니다.
         - "장학금 지급", "국제화경비", "외국인 대학원생" 등 키워드 위주로도 질문이 가능합니다.
+        - 답변 아래 👍/👎 버튼으로 품질을 평가해 주세요. (개선에 활용됩니다)
         """)
 
     # 대화 기록 출력
-    for msg in st.session_state.messages:
+    for idx, msg in enumerate(st.session_state.messages):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
-            # 참고 문헌이 있으면 함께 출력
-            if "sources" in msg and msg["sources"]:
-                with st.expander("📚 참고한 원본 Q&A 보기"):
-                    for idx, doc in enumerate(msg["sources"], 1):
-                        date_str = f"({doc['a_date']})" if doc['a_date'] else ""
-                        st.markdown(f"**[{idx}] {doc['id']} {date_str}**")
-                        st.markdown(f"> **Q:** {doc['question']}")
-                        st.markdown(f"> **A:** {doc['answer']}")
-                        st.divider()
+            if msg["role"] == "assistant":
+                if "sources" in msg and msg["sources"]:
+                    _render_sources(msg["sources"])
+                _render_feedback(idx, msg)
 
     # 채팅 입력창
     if prompt := st.chat_input("질문을 입력하세요 (예: 장학금 중복 수혜 가능한가요?)"):
-        # 사용자 메시지 화면에 추가
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # 챗봇 응답 처리
         if st.session_state.engine:
             with st.chat_message("assistant"):
                 message_placeholder = st.empty()
                 full_response = ""
-                
+                t0 = time.time()
+
                 with st.spinner("관련 문서를 검색 중입니다..."):
-                    # 1. 유사 문서 검색
                     retrieved_docs = st.session_state.engine.retrieve(prompt, top_k=top_k)
-                
+
                 if not retrieved_docs:
-                    st.warning("관련된 기존 Q&A를 찾지 못했습니다.")
+                    st.warning("관련된 참고 문서를 찾지 못했습니다.")
                 else:
-                    # 2. 스트리밍 응답 생성
                     for chunk in st.session_state.engine.generate_answer(prompt, retrieved_docs):
                         full_response += chunk
                         message_placeholder.markdown(full_response + "▌")
-                    
                     message_placeholder.markdown(full_response)
-                    
-                    # 3. 출처 정보 표시
-                    with st.expander("📚 참고한 원본 Q&A 보기"):
-                        for idx, doc in enumerate(retrieved_docs, 1):
-                            date_str = f"({doc['a_date']})" if doc['a_date'] else ""
-                            st.markdown(f"**[{idx}] {doc['id']} {date_str}**")
-                            st.markdown(f"> **Q:** {doc['question']}")
-                            st.markdown(f"> **A:** {doc['answer']}")
-                            st.divider()
-                    
-                    # 세션에 저장
-                    st.session_state.messages.append({
-                        "role": "assistant", 
+
+                    _render_sources(retrieved_docs)
+
+                    latency_ms = int((time.time() - t0) * 1000)
+                    log_id = None
+                    try:
+                        log_id = log_request(
+                            query=prompt,
+                            top_k=top_k,
+                            retrieved_docs=retrieved_docs,
+                            answer=full_response,
+                            latency_ms=latency_ms,
+                            llm_model=LLM_MODEL,
+                            embedding_model=EMBEDDING_MODEL,
+                        )
+                    except Exception as e:
+                        st.warning(f"요청 로그 기록 실패: {e}")
+
+                    new_msg = {
+                        "role": "assistant",
                         "content": full_response,
-                        "sources": retrieved_docs
-                    })
+                        "sources": retrieved_docs,
+                        "log_id": log_id,
+                        "feedback": None,
+                    }
+                    st.session_state.messages.append(new_msg)
+                    _render_feedback(len(st.session_state.messages) - 1, new_msg)
         else:
             st.error("API 키가 없거나 DB가 구성되지 않아 응답할 수 없습니다.")
+
 
 if __name__ == "__main__":
     main()

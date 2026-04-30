@@ -1,34 +1,96 @@
 import pandas as pd
 import os
-
-INPUT_FILE = "bk21_qna_dataset.csv"
-OUTPUT_FILE = "bk21_qna_cleaned.csv"
-
 import re
+
+DATA_DIR = "data"
+INPUT_FILE = f"{DATA_DIR}/bk21_qna_dataset.csv"
+OUTPUT_FILE = f"{DATA_DIR}/bk21_qna_cleaned.csv"
+
+# 줄 전체가 인사말/보일러플레이트일 때만 제거하는 패턴.
+# 본문 중간의 같은 단어(예: "...관련하여 문의드립니다.")는 절대 건드리지 않는다.
+GREETING_LINE_PATTERNS = [
+    r'^\(?수정\)?\s*안녕(?:하세요|하십니까)[\.,\s]*BK21\s*사업팀입니다[\.\,\!\?\s]*$',
+    r'^\(?수정\)?\s*안녕(?:하세요|하십니까)[\.\,\!\?\s]*$',
+    r'^\(?수정\)?\s*BK21\s*사업팀입니다[\.\,\!\?\s]*$',
+    r'^감사(?:합니다|드립니다)[\.\,\!\?\s]*$',
+    r'^고맙습니다[\.\,\!\?\s]*$',
+    r'^문의드립니다[\.\,\!\?\s]*$',
+    r'^문의\s*부탁드립니다[\.\,\!\?\s]*$',
+    r'^질문(?:드립니다|있습니다)[\.\,\!\?\s]*$',
+    r'^수고(?:하십니다|하십니까|많으십니다)[\.\,\!\?\s]*$',
+    r'^늘\s*수고가\s*많으십니다[\.\,\!\?\s]*$',
+    r'^답변에?\s*미리\s*감사드립니다[\.\,\!\?\s]*$',
+    r'^답변(?:을)?\s*기다리겠습니다[\.\,\!\?\s]*$',
+    r'^답변\s*부탁드립니다[\.\,\!\?\s]*$',
+    r'^답변에?\s*감사드립니다[\.\,\!\?\s]*$',
+    r'^문의주신\s*사항에\s*대해\s*다음과\s*같이\s*안내\s*드립니다[\.\,\!\?\s]*$',
+]
+GREETING_RE = re.compile('|'.join(GREETING_LINE_PATTERNS), flags=re.IGNORECASE)
+
+# 단락 시작에서 prefix로 떨어내야 할 보일러플레이트 (한 줄에 본문과 함께 붙어있을 때)
+PARAGRAPH_PREFIX_PATTERNS = [
+    # "(수정) 안녕하세요, BK21사업팀입니다." + "문의주신 사항에 대해 다음과 같이 안내 드립니다."
+    r'(?:\(수정\)\s*)?안녕(?:하세요|하십니까)[\.\,\s]*BK21\s*사업팀입니다[\.\,\s]*',
+    r'(?:\(수정\)\s*)?BK21\s*사업팀입니다[\.\,\s]*',
+    r'(?:\(수정\)\s*)?안녕(?:하세요|하십니까)[\.\,\s]+(?=\S)',
+    r'(?:\(수정\)\s*)?문의주신\s*사항에\s*대해\s*다음과\s*같이\s*안내\s*드립니다[\.\,\s]*',
+]
+PARAGRAPH_PREFIX_RES = [
+    re.compile(r'(^|\n)[ \t]*' + pat, flags=re.IGNORECASE)
+    for pat in PARAGRAPH_PREFIX_PATTERNS
+]
+
+# 작성자 + 타임스탬프 블록 (BKS관리자 외 일반 이름 답글까지 포함)
+AUTHOR_TIMESTAMP_RE = re.compile(
+    r'(?:^|\n)[ \t]*[A-Za-z가-힣][A-Za-z가-힣0-9 ]{1,14}\s*\r?\n\s*'
+    r'\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2}\s*\r?\n?',
+)
+
+# 끝에 붙는 맺음말
+TRAILING_RE = re.compile(
+    r'(?:\s*(?:감사합니다|감사드립니다|고맙습니다|이상입니다))[\.\,\!\?\s]*$',
+    flags=re.IGNORECASE,
+)
+
 
 def remove_greetings(text):
     if not isinstance(text, str):
         return ""
-    
-    # 1. Answer에 항상 붙는 작성자 및 날짜 패턴 제거
-    # 예: "BKS관리자\n2026-04-27 16:22:55"
-    text = re.sub(r'BKS[가-힣a-zA-Z]*\s*\n\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}', '', text)
-    
-    # 2. 일반적인 인사말/맺음말 제거
-    greetings = [
-        r'안녕[하십니까세요]+[\.\,\!\?\s]*',
-        r'수고[하십니까많으십니다]+[\.\,\!\?\s]*',
-        r'감사[합니다]+[\.\,\!\?\s]*',
-        r'고맙[습니다]+[\.\,\!\?\s]*',
-        r'문의[드립니다]+[\.\,\!\?\s]*',
-        r'질문[드립니다]+[\.\,\!\?\s]*',
-        r'BK21[ ]*사업팀입니다[\.\,\!\?\s]*',
-        r'늘 수고가 많으십니다[\.\,\!\?\s]*',
-    ]
-    
-    for pattern in greetings:
-        text = re.sub(pattern, '', text, flags=re.IGNORECASE)
-        
+
+    # 1. NBSP / zero-width 공백 정규화
+    text = text.replace('\xa0', ' ').replace('​', '')
+
+    # 2. 작성자+타임스탬프 블록 제거 (다단 댓글에도 적용)
+    text = AUTHOR_TIMESTAMP_RE.sub('\n', text)
+
+    # 3. 단락 시작 prefix(인사말 + BK21사업팀입니다 + 문의주신 사항...) 제거
+    #    여러 번 반복해서 chained prefix를 한 번에 떨어냄
+    for _ in range(3):
+        before = text
+        for rx in PARAGRAPH_PREFIX_RES:
+            text = rx.sub(r'\1', text)
+        if text == before:
+            break
+
+    # 4. 줄 단위 인사말 라인 제거
+    out_lines = []
+    for line in re.split(r'\r?\n', text):
+        stripped = line.strip()
+        if not stripped:
+            out_lines.append('')
+            continue
+        if GREETING_RE.match(stripped):
+            continue
+        out_lines.append(line)
+    text = '\n'.join(out_lines)
+
+    # 5. 끝맺음말
+    text = TRAILING_RE.sub('', text)
+
+    # 6. 줄바꿈 정규화
+    text = re.sub(r'[ \t]+\n', '\n', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+
     return text.strip()
 
 def preprocess_data():
@@ -57,7 +119,7 @@ def preprocess_data():
 
     # 4. 답변 메타데이터(날짜) 분리 추출
     # "BKS관리자\n2026-04-27 16:22:55" 패턴에서 날짜 부분만 캡처하여 새 컬럼 생성
-    df_cleaned['Answer_Date'] = df_cleaned['Answer'].str.extract(r'BKS[가-힣a-zA-Z]*\s*\n(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})')
+    df_cleaned['Answer_Date'] = df_cleaned['Answer'].str.extract(r'BKS[가-힣a-zA-Z]*\s*\r?\n\s*(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2})')
     # 결측치(매칭 안된 경우)는 빈 문자열로 처리
     df_cleaned['Answer_Date'] = df_cleaned['Answer_Date'].fillna('')
 

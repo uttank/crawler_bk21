@@ -1,0 +1,250 @@
+# BK21 RAG 평가 골든셋 (v1)
+#
+# 각 질문에 대해 기대 출처와 핵심 키워드를 명시. 자유롭게 추가/수정.
+#
+# expected_sources:
+#   - type: qna  +  id: <nttId>           : Q&A 게시물 ID 매칭
+#   - type: regulation  +  citation_match: <부분 문자열>  : citation 안에 부분 매칭
+#
+# expected_keywords:
+#   - 답변 본문에 들어가야 할 핵심 단어들 (대소문자 구분, 공백 무시)
+#
+# 평가 시:
+#   - retrieval@k = expected_sources 중 적어도 하나가 top-k에 들어왔는가
+#   - retrieval_recall = expected_sources 중 들어온 비율
+#   - kw_recall = expected_keywords 중 답변에 등장한 비율
+#   - faithfulness = 답변에 인용된 nttId가 retrieved 문서에 있는가
+
+description: BK21 RAG 평가 골든셋 v1
+schema_version: 1
+
+questions:
+  # ================== 장학금 ==================
+  - id: q01
+    category: 장학금
+    query: 장학금 중복 수혜가 가능한가요?
+    expected_sources:
+      - type: regulation
+        citation_match: 예산편성
+      - type: qna
+        id: "37806"
+    expected_keywords:
+      - 중복
+      - 교내장학금
+      - 이중 지급
+    notes: BK21 사업과 이중 지급 제한 사업 간 충돌 케이스
+
+  - id: q02
+    category: 장학금
+    query: A 학생이 받던 장학금을 학기 중간에 B 학생이 이어받을 수 있나요?
+    expected_sources:
+      - type: qna
+        id: "37832"
+    expected_keywords:
+      - 6개월
+      - 1개학기
+      - 승인
+    notes: 학기 중간 인계 가능 여부
+
+  # ================== 참여자격 ==================
+  - id: q03
+    category: 참여자격
+    query: 참여대학원생의 자격 요건이 무엇인가요?
+    expected_sources:
+      - type: regulation
+        citation_match: 별표2
+      - type: regulation
+        citation_match: 사업단 자체규정
+    expected_keywords:
+      - 전일제
+      - 4대보험
+    notes: 별표2 + 사업단 자체규정 둘 다 매치되어야 이상적
+
+  - id: q04
+    category: 참여자격
+    query: 외국인 대학원생도 BK21 참여대학원생이 될 수 있나요?
+    expected_sources:
+      - type: regulation
+        citation_match: 별표2
+    expected_keywords:
+      - 외국인
+      - 참여
+    notes:
+
+  - id: q05
+    category: 참여자격
+    query: 외국인 대학원생이 비자 만료 후 공백기간이 생긴 경우 어떻게 처리해야 하나요?
+    expected_sources:
+      - type: qna
+        id: "37843"
+    expected_keywords:
+      - 비자
+      - 공백
+      - 증빙
+    notes: 이전에 LLM이 회피했던 케이스 (시스템 프롬프트 완화 후 답변 가능)
+
+  # ================== 국제화경비 / 학술대회 ==================
+  - id: q06
+    category: 학술대회
+    query: 국제학술대회 참가비를 지원받을 수 있나요?
+    expected_sources:
+      - type: regulation
+        citation_match: 예산편성
+    expected_keywords:
+      - 인정 기준
+      - 발표
+    notes: 예산편성·집행기준 제18조 ③항 등
+
+  - id: q07
+    category: 학술대회
+    query: 두 개의 학회에 연이어 참석하는 경우 하나의 단기연수로 처리할 수 있나요?
+    expected_sources:
+      - type: qna
+        id: "21769"
+    expected_keywords:
+      - 단기연수
+      - 등록비
+    notes:
+
+  - id: q08
+    category: 국제화경비
+    query: 단기연수 지원 한도가 얼마인가요?
+    expected_sources:
+      - type: regulation
+        citation_match: 사업단 자체규정
+    expected_keywords:
+      - 700만원
+    notes: 자체규정에는 700만원 한도 명시. 청크 분할 이슈로 검색 실패 가능 (failure case로 추적)
+
+  - id: q09
+    category: 국제화경비
+    query: 해외석학 강사료만 지급하는 경우 보딩패스가 필요한가요?
+    expected_sources:
+      - type: qna
+        id: "37833"
+    expected_keywords:
+      - 자체규정
+    notes:
+
+  - id: q10
+    category: 국제화경비
+    query: 장기연수 체재비 지원이 가능한가요?
+    expected_sources:
+      - type: qna
+        id: "30805"
+    expected_keywords:
+      - 체재비
+      - 장기
+    notes:
+
+  # ================== 윤리 ==================
+  - id: q11
+    category: 윤리
+    query: 연구윤리과목은 어떻게 개설해야 하나요?
+    expected_sources:
+      - type: regulation
+        citation_match: 매뉴얼
+    expected_keywords:
+      - 대학 본부
+      - 이수
+    notes: 매뉴얼 FAQ + 관리운영지침 제5조
+
+  # ================== 사업비 / 운영 ==================
+  - id: q12
+    category: 사업비
+    query: 사업비를 학과 명의 계좌에서 직접 관리해도 되나요?
+    expected_sources:
+      - type: regulation
+        citation_match: 예산편성
+    expected_keywords:
+      - 중앙관리
+      - 위반
+    notes: 예산편성·집행기준 제5조 사업비 중앙관리
+
+  - id: q13
+    category: 사업비
+    query: 인건비는 어떤 항목에 포함되나요?
+    expected_sources:
+      - type: regulation
+        citation_match: 예산편성
+    expected_keywords:
+      - 인건비
+    notes:
+
+  # ================== 절차/시스템 ==================
+  - id: q14
+    category: 시스템
+    query: BK21 사업 종합정보관리시스템에서 성과를 어떻게 등록하나요?
+    expected_sources:
+      - type: regulation
+        citation_match: 매뉴얼
+    expected_keywords:
+      - 종합정보관리시스템
+      - 성과
+    notes: 매뉴얼이 답해야 하는 절차성 질의
+
+  - id: q15
+    category: 시스템
+    query: 우수 대학원생 국제 공동연수의 정산은 어떻게 진행하나요?
+    expected_sources:
+      - type: regulation
+        citation_match: 매뉴얼
+    expected_keywords:
+      - 종합정보시스템
+      - 보고서
+    notes:
+
+  # ================== 평가 ==================
+  - id: q16
+    category: 평가
+    query: BK21 사업의 중간평가는 언제 진행되나요?
+    expected_sources:
+      - type: regulation
+        citation_match: 매뉴얼
+    expected_keywords:
+      - 중간평가
+    notes:
+
+  # ================== 부정행위 / 신고 ==================
+  - id: q17
+    category: 사업비
+    query: 사업비집행 신고센터는 어떻게 운영되어야 하나요?
+    expected_sources:
+      - type: regulation
+        citation_match: 관리운영지침
+    expected_keywords:
+      - 신고
+      - 내부
+    notes: 관리운영지침 제6조
+
+  # ================== 사업기간 ==================
+  - id: q18
+    category: 운영
+    query: BK21 4단계 사업의 전체 기간은 언제부터 언제까지인가요?
+    expected_sources:
+      - type: regulation
+        citation_match: 관리운영지침
+    expected_keywords:
+      - "2020"
+      - "2027"
+    notes: 관리운영지침 제3조 사업기간
+
+  # ================== 신진연구인력 ==================
+  - id: q19
+    category: 인력
+    query: 신진연구인력 채용 절차는 어떻게 되나요?
+    expected_sources:
+      - type: regulation
+        citation_match: 사업단 자체규정
+    expected_keywords:
+      - 신진연구인력
+    notes: 사업단 자체규정 Ⅱ.4. 또는 Ⅲ.2.
+
+  # ================== Edge case (답이 없을 만한) ==================
+  - id: q20
+    category: edge
+    query: 점심 메뉴는 무엇인가요?
+    expected_sources: []
+    expected_keywords:
+      - 찾기 어렵
+    notes: 무관 질문 — "찾기 어렵다"고 안내해야 (회피 동작 검증)
