@@ -15,8 +15,13 @@
 #   - kw_recall = expected_keywords 중 답변에 등장한 비율
 #   - faithfulness = 답변에 인용된 nttId가 retrieved 문서에 있는가
 
-description: BK21 RAG 평가 골든셋 v1
+description: BK21 RAG 평가 골든셋 v2 (정밀화)
 schema_version: 1
+notes: |
+  v2 변경 (2026-04-30):
+  - 부정확한 expected_sources 보정 (q04, q05, q07, q13, q16, q19)
+  - 좁게 잡혀 있던 citation_match를 실제 잡히는 정답 조항으로
+  - 추가 질문 5개 (q21~q25) — 다양한 영역 커버
 
 questions:
   # ================== 장학금 ==================
@@ -65,23 +70,31 @@ questions:
     query: 외국인 대학원생도 BK21 참여대학원생이 될 수 있나요?
     expected_sources:
       - type: regulation
-        citation_match: 별표2
+        citation_match: 실무자매뉴얼
+      - type: qna
+        id: "33092"
+      - type: qna
+        id: "37624"
     expected_keywords:
       - 외국인
       - 참여
-    notes:
+    notes: v2 - 별표2 매칭이 실제로는 잘 안 됨. 매뉴얼 ⑦항과 관련 Q&A로 변경
 
   - id: q05
     category: 참여자격
     query: 외국인 대학원생이 비자 만료 후 공백기간이 생긴 경우 어떻게 처리해야 하나요?
     expected_sources:
       - type: qna
+        id: "24254"
+      - type: qna
+        id: "28986"
+      - type: qna
         id: "37843"
     expected_keywords:
       - 비자
       - 공백
       - 증빙
-    notes: 이전에 LLM이 회피했던 케이스 (시스템 프롬프트 완화 후 답변 가능)
+    notes: v2 - 더 정확한 답변 nttId 24254(D-2 공백시 사증발급확인서), 28986(4대보험 자료) 추가
 
   # ================== 국제화경비 / 학술대회 ==================
   - id: q06
@@ -101,10 +114,14 @@ questions:
     expected_sources:
       - type: qna
         id: "21769"
+      - type: qna
+        id: "35914"
+      - type: regulation
+        citation_match: 예산편성·집행기준 제18조
     expected_keywords:
       - 단기연수
       - 등록비
-    notes:
+    notes: v2 - nttId 35914(장기연수 중 학회 참가 별도 처리), 예산편성 제18조(국제화경비) 추가
 
   - id: q08
     category: 국제화경비
@@ -166,10 +183,12 @@ questions:
     query: 인건비는 어떤 항목에 포함되나요?
     expected_sources:
       - type: regulation
-        citation_match: 예산편성
+        citation_match: 관리운영지침 제46조
+      - type: regulation
+        citation_match: 예산편성·집행기준 제16조
     expected_keywords:
       - 인건비
-    notes:
+    notes: v2 - 막연했던 "예산편성"을 정확한 조항(관리운영지침 제46조 인건비, 예산편성 제16조)으로
 
   # ================== 절차/시스템 ==================
   - id: q14
@@ -200,10 +219,12 @@ questions:
     query: BK21 사업의 중간평가는 언제 진행되나요?
     expected_sources:
       - type: regulation
-        citation_match: 매뉴얼
+        citation_match: 관리운영지침 제22조
+      - type: qna
+        id: "37152"
     expected_keywords:
       - 중간평가
-    notes:
+    notes: v2 - 매뉴얼만 있던 expected를 관리운영지침 제22조(중간평가)와 nttId 37152(미래/혁신인재 평가일정)로
 
   # ================== 부정행위 / 신고 ==================
   - id: q17
@@ -235,10 +256,14 @@ questions:
     query: 신진연구인력 채용 절차는 어떻게 되나요?
     expected_sources:
       - type: regulation
+        citation_match: 관리운영지침 제14조
+      - type: regulation
         citation_match: 사업단 자체규정
+      - type: regulation
+        citation_match: 예산편성·집행기준 제16조
     expected_keywords:
       - 신진연구인력
-    notes: 사업단 자체규정 Ⅱ.4. 또는 Ⅲ.2.
+    notes: v2 - 자체규정만 있던 expected를 관리운영지침 제14조(신진연구인력)와 예산편성 제16조 추가
 
   # ================== Edge case (답이 없을 만한) ==================
   - id: q20
@@ -248,3 +273,63 @@ questions:
     expected_keywords:
       - 찾기 어렵
     notes: 무관 질문 — "찾기 어렵다"고 안내해야 (회피 동작 검증)
+
+  # ================== v2 추가 질문 ==================
+  - id: q21
+    category: 사업비
+    query: BK21 사업비를 신용카드로 어떻게 집행하나요?
+    expected_sources:
+      - type: regulation
+        citation_match: 예산편성·집행기준 제13조
+      - type: regulation
+        citation_match: 예산편성·집행기준 제7조
+    expected_keywords:
+      - 카드
+      - 집행
+    notes: v2 - 회계 및 계정 / 예산의 집행 조항
+
+  - id: q22
+    category: 장학금
+    query: 연구장학금은 매월 언제 지급되나요?
+    expected_sources:
+      - type: regulation
+        citation_match: 사업단 자체규정
+    expected_keywords:
+      - 매월
+      - 지급
+    notes: v2 - 자체규정 Ⅲ.3.(1) "장학금(매월 25일 지급)"
+
+  - id: q23
+    category: 장학금
+    query: 대학원생 연구장학금의 단가는 얼마인가요?
+    expected_sources:
+      - type: regulation
+        citation_match: 관리운영지침 제30조
+      - type: regulation
+        citation_match: 예산편성·집행기준 제14조
+    expected_keywords:
+      - 연구장학금
+      - 만원
+    notes: v2 - 연구장학금 지급 단가 관련 조항
+
+  - id: q24
+    category: 학술대회
+    query: 국제학술대회 인정 기준은 무엇인가요?
+    expected_sources:
+      - type: regulation
+        citation_match: 국제학술대회 인정기준
+    expected_keywords:
+      - 4개국
+      - 발표
+    notes: v2 - 매뉴얼 별표 [국제학술대회 인정기준]
+
+  - id: q25
+    category: 참여자격
+    query: 졸업한 박사가 BK21 사업에 참여할 수 있나요?
+    expected_sources:
+      - type: qna
+        id: "27730"
+    expected_keywords:
+      - 졸업
+      - 참여
+    notes: v2 - 졸업 시 참여 불가, 수료생은 연구생 등록 시 가능

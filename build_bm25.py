@@ -53,8 +53,10 @@ def main():
     metas = all_data["metadatas"]
     print(f"[*] 문서 로드: {len(ids)}건")
 
-    # 토큰화 — bm25s 기본 토크나이저는 비단어 문자로 분리.
-    # 한국어 어절(공백 단위)이 그대로 토큰이 되어 키워드 매칭에 적합.
+    # 토큰화 — bm25s 기본 토크나이저 (비단어 문자 분리).
+    # NB: kiwipiepy 형태소 분석을 시도했으나 우리 도메인의 복합명사
+    # ("신진연구인력", "교육연구단" 등)가 분해되어 정확 매칭 약화 → retrieval@k 10%p 퇴보.
+    # 자세한 기록은 eval/METRICS.md 참고. 형태소 도입 시 복합명사 보존 후처리 필요.
     print("[*] 토큰화 중...")
     tokens = bm25s.tokenize(docs, stopwords=None, stemmer=None, show_progress=True)
 

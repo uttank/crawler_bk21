@@ -1,9 +1,30 @@
+import re
 import time
 
 import streamlit as st
 
 from rag_engine import BKRAGEngine, EMBEDDING_MODEL, LLM_MODEL
 from request_log import log_feedback, log_request
+
+# NRF BK21 Q&A 게시판 원문 URL 패턴
+NRF_QNA_URL = "https://bk21four.nrf.re.kr/qnaBbs/selectBoardArticle.do?nttId={ntt_id}&bbsId=BBSMSTR_000000000022"
+
+# 답변 본문 내 nttId 인용 패턴 — "nttId 12345" 형식만 안전하게 처리
+# (괄호 안의 단순 숫자는 다른 것과 모호하므로 처리 X)
+# 한글 조사("을", "와", "에서")가 뒤에 붙어도 매칭하도록 `\b` 대신 명시적 경계 사용
+_NTTID_CITATION_RE = re.compile(r'(?<![A-Za-z0-9])nttId\s+(\d{4,6})(?!\d)')
+
+
+def _nrf_url(ntt_id: str) -> str:
+    return NRF_QNA_URL.format(ntt_id=ntt_id)
+
+
+def linkify_nttids(text: str) -> str:
+    """답변 본문의 'nttId 12345' 표기를 NRF 게시판 markdown 링크로 변환."""
+    return _NTTID_CITATION_RE.sub(
+        lambda m: f"[nttId {m.group(1)}]({_nrf_url(m.group(1))})",
+        text,
+    )
 
 # 페이지 기본 설정
 st.set_page_config(
@@ -59,7 +80,9 @@ def _render_sources(docs):
         with st.expander(f"💬 참고한 과거 Q&A {len(qnas)}건"):
             for idx, d in enumerate(qnas, 1):
                 date_str = f"({d['a_date']})" if d.get('a_date') else ""
-                st.markdown(f"**[{idx}] nttId {d['id']}** {date_str}")
+                ntt_id = str(d['id'])
+                link = _nrf_url(ntt_id)
+                st.markdown(f"**[{idx}] [nttId {ntt_id}]({link})** {date_str}  ↗ NRF 게시판")
                 st.markdown(f"> **Q:** {d['question']}")
                 st.markdown(f"> **A:** {d['answer']}")
                 st.divider()
@@ -108,7 +131,10 @@ def main():
     # 대화 기록 출력
     for idx, msg in enumerate(st.session_state.messages):
         with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+            content = msg["content"]
+            if msg["role"] == "assistant":
+                content = linkify_nttids(content)
+            st.markdown(content)
             if msg["role"] == "assistant":
                 if "sources" in msg and msg["sources"]:
                     _render_sources(msg["sources"])
@@ -135,7 +161,8 @@ def main():
                     for chunk in st.session_state.engine.generate_answer(prompt, retrieved_docs):
                         full_response += chunk
                         message_placeholder.markdown(full_response + "▌")
-                    message_placeholder.markdown(full_response)
+                    # 스트리밍 완료 후 nttId → NRF 링크로 변환해 재렌더
+                    message_placeholder.markdown(linkify_nttids(full_response))
 
                     _render_sources(retrieved_docs)
 
