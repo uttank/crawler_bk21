@@ -1,11 +1,19 @@
+import json
 import os
 import re
 from datetime import datetime
+from pathlib import Path
 
 import chromadb
 from chromadb.utils import embedding_functions
 from openai import OpenAI
 from dotenv import load_dotenv
+
+try:
+    import bm25s
+    _HAS_BM25 = True
+except ImportError:
+    _HAS_BM25 = False
 
 load_dotenv()
 
@@ -20,6 +28,13 @@ LLM_MODEL = "gpt-4o-mini"
 RERANK_FACTOR = 2
 DATE_PENALTY_PER_YEAR = 0.02
 _YEAR_RE = re.compile(r'(\d{4})')
+
+# Hybrid retrieval 설정
+BM25_DIR = Path("data/bm25")
+RRF_K = 60                   # RRF 표준 상수 — 작은 차이를 부드럽게 함
+HYBRID_DENSE_TOP_N = 30      # dense 채널에서 가져올 후보 수 (각 doc_type별)
+HYBRID_BM25_TOP_N = 50       # BM25 채널 (단일 인덱스, 사후 분리)
+DATE_RRF_BOOST = 0.0005      # 1년에 RRF score 감소량 (RRF 자체가 0~0.05 범위라 약하게)
 
 class BKRAGEngine:
     def __init__(self):
@@ -45,6 +60,20 @@ class BKRAGEngine:
         except Exception as e:
             print("[!] ChromaDB 컬렉션을 찾을 수 없습니다. 벡터 DB를 먼저 구축해 주세요.")
             self.collection = None
+
+        # BM25 인덱스 로드 (있으면 hybrid, 없으면 dense-only)
+        self.bm25 = None
+        self.bm25_mapping = None
+        if _HAS_BM25 and (BM25_DIR / "mapping.json").exists():
+            try:
+                self.bm25 = bm25s.BM25.load(str(BM25_DIR / "index"), load_corpus=False)
+                with open(BM25_DIR / "mapping.json", encoding="utf-8") as f:
+                    self.bm25_mapping = json.load(f)
+                print(f"[v] BM25 인덱스 로드: {len(self.bm25_mapping['ids'])}건")
+            except Exception as e:
+                print(f"[!] BM25 인덱스 로드 실패: {e}. dense-only 모드.")
+                self.bm25 = None
+                self.bm25_mapping = None
 
     def _parse_regulation(self, meta, doc_text, distance):
         return {
@@ -81,62 +110,128 @@ class BKRAGEngine:
             "_score": distance + years_old * DATE_PENALTY_PER_YEAR,
         }
 
-    def retrieve(self, query: str, top_k: int = 5):
-        """질문과 유사한 문서를 검색합니다.
+    def _dense_search(self, query: str, n: int, where: dict):
+        """Chroma dense 검색 — (chroma_id, meta, doc_text, distance) 리스트 반환."""
+        results = self.collection.query(
+            query_texts=[query], n_results=n, where=where,
+        )
+        out = []
+        if results and results.get("metadatas") and results["metadatas"][0]:
+            for i, meta in enumerate(results["metadatas"][0]):
+                out.append((
+                    results["ids"][0][i],
+                    meta,
+                    results["documents"][0][i],
+                    results["distances"][0][i] if "distances" in results else 0.0,
+                ))
+        return out
 
-        규정과 Q&A를 별도 쿼리로 가져와 후보 풀이 한쪽으로 쏠리는 것을 방지.
-        규정은 168건 / Q&A는 10,801건이라 단일 쿼리만으로는 규정이 묻힘.
+    def _bm25_search(self, query: str, n: int):
+        """BM25 검색 — (chroma_id, meta, doc_text, bm25_score) 리스트 반환.
+
+        단일 인덱스이므로 doc_type 분리는 호출자가 처리.
+        """
+        if not self.bm25 or not self.bm25_mapping:
+            return []
+        query_tokens = bm25s.tokenize([query], stopwords=None, stemmer=None)
+        results, scores = self.bm25.retrieve(query_tokens, k=n, show_progress=False)
+        out = []
+        for idx, score in zip(results[0], scores[0]):
+            i = int(idx)
+            out.append((
+                self.bm25_mapping["ids"][i],
+                self.bm25_mapping["metadatas"][i],
+                self.bm25_mapping["documents"][i],
+                float(score),
+            ))
+        return out
+
+    def _rrf_fuse(self, dense_hits, bm25_hits, k=RRF_K):
+        """RRF 결합. 같은 chroma_id가 여러 채널에 등장하면 rank 합산.
+
+        반환: chroma_id 순으로 정렬된 (chroma_id, meta, doc_text, dense_dist, bm25_score, rrf_score)
+        """
+        scores = {}
+        merged = {}
+        for rank, (cid, meta, doc, dist) in enumerate(dense_hits):
+            scores[cid] = scores.get(cid, 0.0) + 1.0 / (k + rank + 1)
+            if cid not in merged:
+                merged[cid] = [meta, doc, dist, None]
+            else:
+                merged[cid][2] = dist
+        for rank, (cid, meta, doc, score) in enumerate(bm25_hits):
+            scores[cid] = scores.get(cid, 0.0) + 1.0 / (k + rank + 1)
+            if cid not in merged:
+                merged[cid] = [meta, doc, None, score]
+            else:
+                merged[cid][3] = score
+        ordered = sorted(scores.keys(), key=lambda c: scores[c], reverse=True)
+        return [(c, *merged[c], scores[c]) for c in ordered]
+
+    def retrieve(self, query: str, top_k: int = 5):
+        """하이브리드 검색: dense + BM25 → RRF 결합 → 규정/Q&A 균형 top_k.
+
+        BM25 인덱스가 없으면 자동으로 dense-only로 폴백.
         """
         if not self.collection:
             return []
 
-        n_qna_candidates = max(top_k * RERANK_FACTOR, top_k * 3)
-        n_reg_candidates = max(top_k, 6)
-
-        # 1) Q&A 검색 — doc_type 누락된 기존 Q&A는 where=$ne 안 걸리므로 nttId 존재로 식별
-        qna_results = self.collection.query(
-            query_texts=[query],
-            n_results=n_qna_candidates,
+        # 1) Dense (채널별, 후보 풍부하게)
+        dense_qna = self._dense_search(
+            query, max(top_k * RERANK_FACTOR, top_k * 3),
             where={"doc_type": {"$ne": "regulation"}},
         )
-        # 2) 규정만 별도 검색
-        reg_results = self.collection.query(
-            query_texts=[query],
-            n_results=n_reg_candidates,
+        dense_reg = self._dense_search(
+            query, max(top_k, HYBRID_DENSE_TOP_N // 2),
             where={"doc_type": "regulation"},
         )
 
-        regs, qnas = [], []
-        if reg_results and reg_results['metadatas'] and reg_results['metadatas'][0]:
-            for i, meta in enumerate(reg_results['metadatas'][0]):
-                regs.append(self._parse_regulation(
-                    meta,
-                    reg_results['documents'][0][i],
-                    reg_results['distances'][0][i] if 'distances' in reg_results else 0,
-                ))
-        if qna_results and qna_results['metadatas'] and qna_results['metadatas'][0]:
-            for i, meta in enumerate(qna_results['metadatas'][0]):
-                qnas.append(self._parse_qna(
-                    meta,
-                    qna_results['documents'][0][i],
-                    qna_results['distances'][0][i] if 'distances' in qna_results else 0,
-                ))
+        # 2) BM25 (단일 인덱스 → 사후 분리)
+        bm25_all = self._bm25_search(query, HYBRID_BM25_TOP_N)
+        bm25_qna = [h for h in bm25_all if h[1].get("doc_type") != "regulation"]
+        bm25_reg = [h for h in bm25_all if h[1].get("doc_type") == "regulation"]
 
-        regs.sort(key=lambda d: d['_score'])
-        qnas.sort(key=lambda d: d['_score'])
+        # 3) RRF 결합 — 채널별
+        fused_qna = self._rrf_fuse(dense_qna, bm25_qna)
+        fused_reg = self._rrf_fuse(dense_reg, bm25_reg)
 
-        # 균형 있게 top_k 채움. 규정은 최대 top_k의 절반(최소 1개), 나머지는 Q&A.
+        # 4) 파싱 + 정렬용 _score
+        current_year = datetime.now().year
+
+        qna_docs = []
+        for cid, meta, doc, dist, bm25_score, rrf in fused_qna:
+            d = self._parse_qna(meta, doc, dist if dist is not None else 1.0)
+            d["bm25_score"] = bm25_score
+            d["rrf_score"] = rrf
+            # _score: RRF 우선(낮을수록 좋음 위해 -rrf), 작은 답변일 페널티 보존
+            year_match = _YEAR_RE.search(d.get("a_date") or d.get("q_date") or "")
+            years_old = max(0, current_year - int(year_match.group(1))) if year_match else 5
+            d["_score"] = -rrf + years_old * DATE_RRF_BOOST
+            qna_docs.append(d)
+
+        reg_docs = []
+        for cid, meta, doc, dist, bm25_score, rrf in fused_reg:
+            d = self._parse_regulation(meta, doc, dist if dist is not None else 1.0)
+            d["bm25_score"] = bm25_score
+            d["rrf_score"] = rrf
+            d["_score"] = -rrf
+            reg_docs.append(d)
+
+        qna_docs.sort(key=lambda x: x["_score"])
+        reg_docs.sort(key=lambda x: x["_score"])
+
+        # 5) 균형 top_k (기존 로직 유지)
         max_regs = max(1, top_k // 2)
-        n_regs = min(max_regs, len(regs))
+        n_regs = min(max_regs, len(reg_docs))
         n_qnas = top_k - n_regs
-        if n_qnas > len(qnas):
-            n_regs = min(top_k - len(qnas), len(regs))
-            n_qnas = len(qnas)
-        if n_regs > len(regs):
-            n_regs = len(regs)
-            n_qnas = min(top_k - n_regs, len(qnas))
+        if n_qnas > len(qna_docs):
+            n_regs = min(top_k - len(qna_docs), len(reg_docs))
+            n_qnas = len(qna_docs)
+        if n_regs > len(reg_docs):
+            n_regs = len(reg_docs)
+            n_qnas = min(top_k - n_regs, len(qna_docs))
 
-        return regs[:n_regs] + qnas[:n_qnas]
+        return reg_docs[:n_regs] + qna_docs[:n_qnas]
 
     def generate_answer(self, user_query: str, retrieved_docs: list):
         """검색된 문서를 바탕으로 프롬프트를 구성하고 LLM 응답을 스트리밍으로 생성합니다."""
