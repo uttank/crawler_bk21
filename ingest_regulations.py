@@ -32,7 +32,7 @@ load_dotenv()
 REGULATIONS_DIR = "data/regulations"
 CHROMA_DB_DIR = os.getenv("CHROMA_DB_DIR", "./data/chroma_db")
 COLLECTION_NAME = "bk21_qna"
-EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_MODEL = "text-embedding-3-large"
 BATCH_SIZE = 100
 
 MIN_CHUNK_LEN = 40

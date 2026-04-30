@@ -10,7 +10,7 @@ load_dotenv()
 INPUT_FILE = "data/bk21_qna_cleaned.csv"
 CHROMA_DB_DIR = os.getenv("CHROMA_DB_DIR", "./data/chroma_db")
 COLLECTION_NAME = "bk21_qna"
-EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_MODEL = "text-embedding-3-large"
 BATCH_SIZE = 100  # 한 번에 임베딩할 텍스트 수 (API 속도 제한 고려)
 
 def build_vector_db():

@@ -71,6 +71,10 @@ def evaluate_question(engine: BKRAGEngine, q: dict, top_k: int, do_generate: boo
         for chunk in engine.generate_answer(q["query"], docs):
             answer += chunk
         t_generate = time.time() - t1
+        
+        # 인용 검증 적용
+        if hasattr(engine, "_verify_citations"):
+            answer = engine._verify_citations(answer, docs)
 
     # 1. retrieval
     expected_sources = q.get("expected_sources", []) or []

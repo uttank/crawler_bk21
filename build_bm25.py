@@ -26,7 +26,7 @@ load_dotenv()
 
 CHROMA_DB_DIR = os.getenv("CHROMA_DB_DIR", "./data/chroma_db")
 COLLECTION_NAME = "bk21_qna"
-EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_MODEL = "text-embedding-3-large"
 BM25_DIR = Path("data/bm25")
 
 
