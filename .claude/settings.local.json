@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(PYTHONIOENCODING=utf-8 venv/Scripts/python.exe *)",
-      "Bash(venv/Scripts/python.exe *)"
-    ]
-  }
-}
